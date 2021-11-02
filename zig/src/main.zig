@@ -1,0 +1,128 @@
+const std = @import("std");
+const mem = std.mem;
+const AesBlock = std.crypto.core.aes.Block;
+
+pub const Ponteil = struct {
+    const State = [8]AesBlock;
+
+    pub const block_length: usize = 32;
+    pub const key_length: usize = 32;
+    pub const digest_length = 32;
+
+    s: State,
+    ctx_segments: u64 = 0,
+    m_segments: u64 = 0,
+
+    const rounds: usize = 12;
+
+    inline fn aesround(in: AesBlock, rk: AesBlock) AesBlock {
+        return in.encrypt(rk);
+    }
+
+    fn update(self: *Ponteil, m0: AesBlock, m1: AesBlock) void {
+        const s = self.s;
+        self.s = State{
+            aesround(s[7], s[0].xorBlocks(m0)),
+            aesround(s[0], s[1]),
+            aesround(s[1], s[2]),
+            aesround(s[2], s[3]),
+            aesround(s[3], s[4].xorBlocks(m1)),
+            aesround(s[4], s[5]),
+            aesround(s[5], s[6]),
+            aesround(s[6], s[7]),
+        };
+    }
+
+    inline fn absorb_block(self: *Ponteil, xi: *const [32]u8) void {
+        const t0 = AesBlock.fromBytes(xi[0..16]);
+        const t1 = AesBlock.fromBytes(xi[16..32]);
+        self.update(t0, t1);
+    }
+
+    fn init(k: [32]u8) Ponteil {
+        const c0 = AesBlock.fromBytes(&[16]u8{ 0x0, 0x1, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0d, 0x15, 0x22, 0x37, 0x59, 0x90, 0xe9, 0x79, 0x62 });
+        const c1 = AesBlock.fromBytes(&[16]u8{ 0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd });
+        const zero = AesBlock.fromBytes(&[_]u8{0} ** 16);
+        const k0 = AesBlock.fromBytes(k[0..16]);
+        const k1 = AesBlock.fromBytes(k[16..32]);
+
+        var self = Ponteil{ .s = State{
+            zero,             k1,
+            k0.xorBlocks(c1), k0.xorBlocks(c0),
+            zero,             k0,
+            k1.xorBlocks(c0), k1.xorBlocks(c1),
+        } };
+        var i: usize = 0;
+        while (i < rounds) : (i += 1) {
+            self.update(c0, c1);
+        }
+        return self;
+    }
+
+    fn absorb(self: *Ponteil, x: []const u8) void {
+        var i: usize = 0;
+        while (i + 32 <= x.len) : (i += 32) {
+            self.absorb_block(x[i..][0..32]);
+        }
+        if (x.len % 32 != 0) {
+            var pad = [_]u8{0} ** 32;
+            mem.copy(u8, pad[0 .. x.len % 32], x[i..]);
+            self.absorb_block(&pad);
+        }
+
+        var len = [_]u8{0x00} ** 32;
+        mem.writeIntLittle(u64, len[0..8], @intCast(u64, x.len) * 8);
+        self.absorb_block(&len);
+    }
+
+    pub fn push_context(self: *Ponteil, ctx: []const u8) void {
+        self.absorb(ctx);
+        self.ctx_segments += 1;
+    }
+
+    pub fn push(self: *Ponteil, m: []const u8) void {
+        self.absorb(m);
+        self.m_segments += 1;
+    }
+
+    pub fn finalize(self: *Ponteil) [32]u8 {
+        var b: [16]u8 = undefined;
+        mem.writeIntLittle(u64, b[0..8], @intCast(u64, self.ctx_segments) * 8);
+        mem.writeIntLittle(u64, b[8..16], @intCast(u64, self.m_segments) * 8);
+        const t = self.s[2].xorBlocks(AesBlock.fromBytes(&b));
+        var i: usize = 0;
+        while (i < rounds) : (i += 1) {
+            self.update(t, t);
+        }
+        const s = self.s;
+        var out: [32]u8 = undefined;
+        mem.copy(u8, out[0..16], &s[1].xorBlocks(s[6]).xorBlocks(s[2].andBlocks(s[3])).toBytes());
+        mem.copy(u8, out[16..32], &s[2].xorBlocks(s[5]).xorBlocks(s[6].andBlocks(s[7])).toBytes());
+        return out;
+    }
+
+    pub fn hash(ctx: ?[]const u8, m: []const u8) [32]u8 {
+        const k = [_]u8{0} ** 32;
+        var ponteil = Ponteil.init(k);
+        if (ctx) |c| {
+            ponteil.push_context(c);
+        }
+        ponteil.push(m);
+        return ponteil.finalize();
+    }
+};
+
+const testing = std.testing;
+const fmt = std.fmt;
+
+test "hash" {
+    const len = 1_000_000 - 1;
+    const alloc = testing.allocator;
+    var m = try alloc.alloc(u8, len);
+    defer alloc.free(m);
+    mem.set(u8, m, 0);
+    var h = Ponteil.hash(null, m);
+    var expected_h: [32]u8 = undefined;
+    _ = try fmt.hexToBytes(&expected_h, "527ab52703ed16f67920bee03e36e3255869a9ade88b5af3f5b459d21f7e4cc3");
+    try testing.expectEqualSlices(u8, &h, &expected_h);
+}
