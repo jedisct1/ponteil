@@ -9,8 +9,6 @@
 
 #include "ponteil.h"
 
-#define ROUNDS 12
-
 #ifdef __x86_64__
 #include <immintrin.h>
 
@@ -23,7 +21,7 @@ aesround(const AesBlock in, const AesBlock rk)
 }
 
 static inline AesBlock
-zero_block()
+zero_block(void)
 {
     return _mm_setzero_si128();
 }
@@ -64,7 +62,7 @@ aesround(const AesBlock in, const AesBlock rk)
 }
 
 static inline AesBlock
-zero_block()
+zero_block(void)
 {
     return vmovq_n_u8(0);
 }
@@ -97,6 +95,18 @@ to_bytes(uint8_t bytes[16], const AesBlock block)
 #error Unsupported architecture
 #endif
 
+static inline uint64_t
+to_le64(uint64_t x)
+{
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    return __builtin_bswap64(x);
+#else
+    return x;
+#endif
+}
+
+#define ROUNDS 12
+
 typedef struct State {
     AesBlock b0;
     AesBlock b1;
@@ -113,16 +123,6 @@ typedef struct Ponteil_ {
     uint64_t ctx_segments;
     uint64_t m_segments;
 } Ponteil_;
-
-static inline uint64_t
-to_le64(uint64_t x)
-{
-#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-    return __builtin_bswap64(x);
-#else
-    return x;
-#endif
-}
 
 static void
 update(Ponteil_ *ponteil, const AesBlock m0, const AesBlock m1)
@@ -171,7 +171,8 @@ ponteil_init(const uint8_t k[32])
                              xor_blocks(k1, c0),
                              xor_blocks(k1, c1),
                          } };
-    int      i;
+
+    int i;
     for (i = 0; i < ROUNDS; i++) {
         update(&ponteil, c0, c1);
     }
