@@ -180,7 +180,7 @@ ponteil_init(const uint8_t k[32])
 }
 
 static void
-absorb(Ponteil_ *ponteil, const void *x_, size_t x_len)
+absorb(Ponteil_ *ponteil, const void *x_, size_t x_len, uint8_t up)
 {
     const uint8_t *x = (const uint8_t *) x_;
     size_t         i;
@@ -196,6 +196,7 @@ absorb(Ponteil_ *ponteil, const void *x_, size_t x_len)
     uint8_t        len[32] = { 0x00 };
     const uint64_t d       = to_le64(((uint64_t) x_len) * 8);
     memcpy(&len[0], &d, 8);
+    len[31] ^= up;
     absorb_block(ponteil, len);
 }
 
@@ -203,7 +204,7 @@ void
 ponteil_push_context(Ponteil *ponteil_, const char *ctx, size_t ctx_len)
 {
     Ponteil_ *ponteil = (Ponteil_ *) (void *) ponteil_;
-    absorb(ponteil, (const void *) ctx, ctx_len);
+    absorb(ponteil, (const void *) ctx, ctx_len, 0x80);
     ponteil->ctx_segments++;
 }
 
@@ -211,7 +212,7 @@ void
 ponteil_push(Ponteil *ponteil_, const void *m, size_t m_len)
 {
     Ponteil_ *ponteil = (Ponteil_ *) (void *) ponteil_;
-    absorb(ponteil, m, m_len);
+    absorb(ponteil, m, m_len, 0x00);
     ponteil->m_segments++;
 }
 

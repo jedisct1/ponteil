@@ -59,7 +59,7 @@ pub const Ponteil = struct {
         return self;
     }
 
-    fn absorb(self: *Ponteil, x: []const u8) void {
+    fn absorb(self: *Ponteil, x: []const u8, up: u8) void {
         var i: usize = 0;
         while (i + 32 <= x.len) : (i += 32) {
             self.absorb_block(x[i..][0..32]);
@@ -72,16 +72,17 @@ pub const Ponteil = struct {
 
         var len = [_]u8{0x00} ** 32;
         mem.writeIntLittle(u64, len[0..8], @intCast(u64, x.len) * 8);
+        len[31] ^= up;
         self.absorb_block(&len);
     }
 
     pub fn push_context(self: *Ponteil, ctx: []const u8) void {
-        self.absorb(ctx);
+        self.absorb(ctx, 0x80);
         self.ctx_segments += 1;
     }
 
     pub fn push(self: *Ponteil, m: []const u8) void {
-        self.absorb(m);
+        self.absorb(m, 0x00);
         self.m_segments += 1;
     }
 
