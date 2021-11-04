@@ -3,7 +3,6 @@
 #pragma GCC target("aes")
 #endif
 
-#include <immintrin.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,23 +11,10 @@
 
 #define ROUNDS 12
 
-typedef __m128i AesBlock;
-typedef struct State {
-    AesBlock b0;
-    AesBlock b1;
-    AesBlock b2;
-    AesBlock b3;
-    AesBlock b4;
-    AesBlock b5;
-    AesBlock b6;
-    AesBlock b7;
-} State;
+#ifdef __x86_64__
+#include <immintrin.h>
 
-typedef struct Ponteil_ {
-    State    s;
-    uint64_t ctx_segments;
-    uint64_t m_segments;
-} Ponteil_;
+typedef __m128i AesBlock;
 
 static inline AesBlock
 aesround(const AesBlock in, const AesBlock rk)
@@ -65,6 +51,68 @@ to_bytes(uint8_t bytes[16], const AesBlock block)
 {
     _mm_storeu_si128((AesBlock *) (void *) bytes, block);
 }
+
+#elif defined(__aarch64__)
+#include <arm_neon.h>
+
+typedef uint8x16_t AesBlock;
+
+static inline AesBlock
+aesround(const AesBlock in, const AesBlock rk)
+{
+    return veorq_u8(vaesmcq_u8(vaeseq_u8(in, vmovq_n_u8(0))), rk);
+}
+
+static inline AesBlock
+zero_block()
+{
+    return vmovq_n_u8(0);
+}
+
+static inline AesBlock
+xor_blocks(const AesBlock x, const AesBlock y)
+{
+    return veorq_u8(x, y);
+}
+
+static inline AesBlock
+and_blocks(const AesBlock x, const AesBlock y)
+{
+    return vandq_u8(x, y);
+}
+
+static inline AesBlock
+from_bytes(const uint8_t bytes[16])
+{
+    return vld1q_u8(bytes);
+}
+
+static inline void
+to_bytes(uint8_t bytes[16], const AesBlock block)
+{
+    vst1q_u8(bytes, block);
+}
+
+#else
+#error Unsupported architecture
+#endif
+
+typedef struct State {
+    AesBlock b0;
+    AesBlock b1;
+    AesBlock b2;
+    AesBlock b3;
+    AesBlock b4;
+    AesBlock b5;
+    AesBlock b6;
+    AesBlock b7;
+} State;
+
+typedef struct Ponteil_ {
+    State    s;
+    uint64_t ctx_segments;
+    uint64_t m_segments;
+} Ponteil_;
 
 static inline uint64_t
 to_le64(uint64_t x)
