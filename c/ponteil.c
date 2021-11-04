@@ -182,7 +182,7 @@ ponteil_init(const uint8_t k[32])
 static void
 absorb(Ponteil_ *ponteil, const void *x_, size_t x_len)
 {
-    const uint8_t *x = x_;
+    const uint8_t *x = (const uint8_t *) x_;
     size_t         i;
     for (i = 0; i + 32 <= x_len; i += 32) {
         absorb_block(ponteil, x + i);
@@ -240,7 +240,7 @@ void
 ponteil_hash(uint8_t h[32], const char *ctx, size_t ctx_len, const void *m_, size_t m_len)
 {
     Ponteil        ponteil = ponteil_init((const uint8_t[32]) { 0 });
-    const uint8_t *m       = m_;
+    const uint8_t *m       = (const uint8_t *) m_;
     if (ctx != NULL) {
         ponteil_push_context(&ponteil, ctx, ctx_len);
     }
