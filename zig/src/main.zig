@@ -86,20 +86,29 @@ pub const Ponteil = struct {
         self.m_segments += 1;
     }
 
-    pub fn finalize(self: *Ponteil) [32]u8 {
+    pub fn finalize(self: *Ponteil, out: []u8) void {
         var b: [16]u8 = undefined;
         mem.writeIntLittle(u64, b[0..8], @intCast(u64, self.ctx_segments) * 8);
         mem.writeIntLittle(u64, b[8..16], @intCast(u64, self.m_segments) * 8);
         const t = self.s[2].xorBlocks(AesBlock.fromBytes(&b));
         var i: usize = 0;
-        while (i < rounds) : (i += 1) {
+        while (i < rounds - 1) : (i += 1) {
             self.update(t, t);
         }
-        const s = self.s;
-        var out: [32]u8 = undefined;
-        mem.copy(u8, out[0..16], &s[1].xorBlocks(s[6]).xorBlocks(s[2].andBlocks(s[3])).toBytes());
-        mem.copy(u8, out[16..32], &s[2].xorBlocks(s[5]).xorBlocks(s[6].andBlocks(s[7])).toBytes());
-        return out;
+        const s = &self.s;
+        i = 0;
+        while (i + 32 <= out.len) : (i += 32) {
+            self.update(t, t);
+            mem.copy(u8, out[i..][0..16], &s[1].xorBlocks(s[6]).xorBlocks(s[2].andBlocks(s[3])).toBytes());
+            mem.copy(u8, out[i..][16..32], &s[2].xorBlocks(s[5]).xorBlocks(s[6].andBlocks(s[7])).toBytes());
+        }
+        if (out.len % 32 != 0) {
+            self.update(t, t);
+            var pad = [_]u8{0} ** 32;
+            mem.copy(u8, pad[0..16], &s[1].xorBlocks(s[6]).xorBlocks(s[2].andBlocks(s[3])).toBytes());
+            mem.copy(u8, pad[16..32], &s[2].xorBlocks(s[5]).xorBlocks(s[6].andBlocks(s[7])).toBytes());
+            mem.copy(u8, pad[0 .. out.len % 32], out[i..]);
+        }
     }
 
     pub fn hash(ctx: ?[]const u8, m: []const u8) [32]u8 {
@@ -109,7 +118,9 @@ pub const Ponteil = struct {
             ponteil.push_context(c);
         }
         ponteil.push(m);
-        return ponteil.finalize();
+        var out: [32]u8 = undefined;
+        ponteil.finalize(&out);
+        return out;
     }
 };
 

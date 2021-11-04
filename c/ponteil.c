@@ -217,7 +217,7 @@ ponteil_push(Ponteil *ponteil_, const void *m, size_t m_len)
 }
 
 void
-ponteil_finalize(Ponteil *ponteil_, uint8_t h[32])
+ponteil_finalize(Ponteil *ponteil_, uint8_t *h, size_t h_len)
 {
     Ponteil_ *ponteil = (Ponteil_ *) (void *) ponteil_;
     uint8_t   b[16];
@@ -229,12 +229,22 @@ ponteil_finalize(Ponteil *ponteil_, uint8_t h[32])
     const State *  s = &ponteil->s;
     const AesBlock t = xor_blocks(s->b2, from_bytes(b));
 
-    int i;
-    for (i = 0; i < ROUNDS; i++) {
+    size_t i;
+    for (i = 0; i < ROUNDS - 1; i++) {
         update(ponteil, t, t);
     }
-    to_bytes(h, xor_blocks(xor_blocks(s->b1, s->b6), and_blocks(s->b2, s->b3)));
-    to_bytes(h + 16, xor_blocks(xor_blocks(s->b2, s->b5), and_blocks(s->b6, s->b7)));
+    for (i = 0; i + 32 <= h_len; i += 32) {
+        update(ponteil, t, t);
+        to_bytes(h + i, xor_blocks(xor_blocks(s->b1, s->b6), and_blocks(s->b2, s->b3)));
+        to_bytes(h + i + 16, xor_blocks(xor_blocks(s->b2, s->b5), and_blocks(s->b6, s->b7)));
+    }
+    if (h_len % 32 != 0) {
+        uint8_t pad[32] = { 0 };
+        update(ponteil, t, t);
+        to_bytes(pad, xor_blocks(xor_blocks(s->b1, s->b6), and_blocks(s->b2, s->b3)));
+        to_bytes(pad + 16, xor_blocks(xor_blocks(s->b2, s->b5), and_blocks(s->b6, s->b7)));
+        memcpy(h + i, pad, h_len % 32);
+    }
 }
 
 void
@@ -246,5 +256,5 @@ ponteil_hash(uint8_t h[32], const char *ctx, size_t ctx_len, const void *m_, siz
         ponteil_push_context(&ponteil, ctx, ctx_len);
     }
     ponteil_push(&ponteil, m, m_len);
-    ponteil_finalize(&ponteil, h);
+    ponteil_finalize(&ponteil, h, 32);
 }
