@@ -247,6 +247,7 @@ ponteil_finalize(Ponteil *ponteil_, uint8_t *h, size_t h_len)
     }
 }
 
+// Only safe on *trusted* inputs, otherwise a key is absolutely necessary.
 void
 ponteil_hash(uint8_t h[32], const char *ctx, size_t ctx_len, const void *m_, size_t m_len)
 {

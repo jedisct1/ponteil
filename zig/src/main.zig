@@ -111,6 +111,7 @@ pub const Ponteil = struct {
         }
     }
 
+    // Only safe on *trusted* inputs, otherwise a key is absolutely necessary.
     pub fn hash(ctx: ?[]const u8, m: []const u8) [32]u8 {
         const k = [_]u8{0} ** 32;
         var ponteil = Ponteil.init(k);
