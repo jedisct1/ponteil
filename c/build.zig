@@ -1,11 +1,15 @@
 const std = @import("std");
 
-pub fn build(b: *std.build.Builder) void {
+pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
-    const lib = b.addStaticLibrary("ponteil", null);
-    lib.addCSourceFile("ponteil.c", &.{});
-    lib.setBuildMode(.ReleaseFast);
-    lib.setTarget(target);
-    lib.strip = true;
-    lib.install();
+    const optimize = b.standardOptimizeOption(.{ .preferred_optimize_mode = .ReleaseFast });
+
+    const lib = b.addStaticLibrary(.{
+        .name = "ponteil",
+        .root_source_file = .{ .path = "ponteil.c" },
+        .target = target,
+        .optimize = optimize,
+    });
+
+    b.installArtifact(lib);
 }
