@@ -122,6 +122,7 @@ typedef struct Ponteil_ {
     State    s;
     uint64_t ctx_segments;
     uint64_t m_segments;
+    uint8_t  keyed;
 } Ponteil_;
 
 static void
@@ -149,7 +150,7 @@ absorb_block(Ponteil_ *ponteil, const uint8_t xi[32])
 }
 
 Ponteil
-ponteil_init(const uint8_t k[32])
+ponteil_init(const uint8_t *k)
 {
     const AesBlock c0 =
         from_bytes((const uint8_t[32]) { 0x0, 0x1, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0d, 0x15, 0x22,
@@ -158,19 +159,31 @@ ponteil_init(const uint8_t k[32])
         from_bytes((const uint8_t[32]) { 0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11,
                                          0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd });
     const AesBlock zero = zero_block();
-    const AesBlock k0   = from_bytes(k);
-    const AesBlock k1   = from_bytes(k + 16);
 
-    Ponteil_ ponteil = { .s = (State) {
-                             zero,
-                             k1,
-                             xor_blocks(k0, c1),
-                             xor_blocks(k0, c0),
-                             zero,
-                             k0,
-                             xor_blocks(k1, c0),
-                             xor_blocks(k1, c1),
-                         } };
+    AesBlock k0;
+    AesBlock k1;
+    if (k == NULL) {
+        k0 = zero;
+        k1 = zero;
+    } else {
+        k0 = from_bytes(k);
+        k1 = from_bytes(k + 16);
+    }
+
+    Ponteil_ ponteil = { .s =
+                             (State) {
+                                 zero,
+                                 k1,
+                                 xor_blocks(k0, c1),
+                                 xor_blocks(k0, c0),
+                                 zero,
+                                 k0,
+                                 xor_blocks(k1, c0),
+                                 xor_blocks(k1, c1),
+                             },
+                         .ctx_segments = 0,
+                         .m_segments   = 0,
+                         .keyed        = k != NULL };
 
     int i;
     for (i = 0; i < ROUNDS; i++) {
@@ -180,17 +193,38 @@ ponteil_init(const uint8_t k[32])
 }
 
 static void
-absorb(Ponteil_ *ponteil, const void *x_, size_t x_len, uint8_t up)
+absorb(Ponteil_ *ponteil_, const void *x_, size_t x_len, uint8_t up)
 {
-    const uint8_t *x = (const uint8_t *) x_;
+    Ponteil_      *ponteil = (Ponteil_ *) (void *) ponteil_;
+    const uint8_t *x       = (const uint8_t *) x_;
     size_t         i;
-    for (i = 0; i + 32 <= x_len; i += 32) {
-        absorb_block(ponteil, x + i);
-    }
-    if (x_len % 32 != 0) {
+
+    if (ponteil->keyed) {
+        for (i = 0; i + 32 <= x_len; i += 32) {
+            absorb_block(ponteil, x + i);
+        }
+        if (x_len % 32 != 0) {
+            uint8_t pad[32] = { 0 };
+            memcpy(pad, x + i, x_len % 32);
+            absorb_block(ponteil, pad);
+        }
+    } else {
         uint8_t pad[32] = { 0 };
-        memcpy(pad, x + i, x_len % 32);
-        absorb_block(ponteil, pad);
+        for (i = 0; i + 16 <= x_len; i += 16) {
+            memcpy(pad, x + i, 8);
+            memcpy(pad + 16, x + i + 8, 8);
+            absorb_block(ponteil, pad);
+        }
+        const size_t left = x_len % 16;
+        if (left != 0) {
+            const size_t left1 = left >= 8 ? 8 : left;
+            memcpy(pad, x + i, left);
+            if (left > 8) {
+                const size_t left2 = left - 8;
+                memcpy(pad + 16, x + i + 8, left2);
+            }
+            absorb_block(ponteil, pad);
+        }
     }
 
     uint8_t        len[32] = { 0x00 };
@@ -226,7 +260,7 @@ ponteil_finalize(Ponteil *ponteil_, uint8_t *h, size_t h_len)
     d = to_le64(((uint64_t) ponteil->m_segments) * 8);
     memcpy(&b[8], &d, 8);
 
-    const State *  s = &ponteil->s;
+    const State   *s = &ponteil->s;
     const AesBlock t = xor_blocks(s->b2, from_bytes(b));
 
     size_t i;
@@ -247,11 +281,23 @@ ponteil_finalize(Ponteil *ponteil_, uint8_t *h, size_t h_len)
     }
 }
 
-// Only safe on *trusted* inputs, otherwise a key is absolutely necessary.
+void
+ponteil_mac(uint8_t h[32], const uint8_t k[32], const char *ctx, size_t ctx_len, const void *m_,
+            size_t m_len)
+{
+    Ponteil        ponteil = ponteil_init(k);
+    const uint8_t *m       = (const uint8_t *) m_;
+    if (ctx != NULL) {
+        ponteil_push_context(&ponteil, ctx, ctx_len);
+    }
+    ponteil_push(&ponteil, m, m_len);
+    ponteil_finalize(&ponteil, h, 32);
+}
+
 void
 ponteil_hash(uint8_t h[32], const char *ctx, size_t ctx_len, const void *m_, size_t m_len)
 {
-    Ponteil        ponteil = ponteil_init((const uint8_t[32]) { 0 });
+    Ponteil        ponteil = ponteil_init(NULL);
     const uint8_t *m       = (const uint8_t *) m_;
     if (ctx != NULL) {
         ponteil_push_context(&ponteil, ctx, ctx_len);

@@ -12,6 +12,7 @@ pub const Ponteil = struct {
     s: State,
     ctx_segments: u64 = 0,
     m_segments: u64 = 0,
+    keyed: bool = false,
 
     const rounds: usize = 12;
 
@@ -39,7 +40,7 @@ pub const Ponteil = struct {
         self.update(t0, t1);
     }
 
-    fn init(k: [32]u8) Ponteil {
+    fn init_(k: [32]u8) Ponteil {
         const c0 = AesBlock.fromBytes(&[16]u8{ 0x0, 0x1, 0x01, 0x02, 0x03, 0x05, 0x08, 0x0d, 0x15, 0x22, 0x37, 0x59, 0x90, 0xe9, 0x79, 0x62 });
         const c1 = AesBlock.fromBytes(&[16]u8{ 0xdb, 0x3d, 0x18, 0x55, 0x6d, 0xc2, 0x2f, 0xf1, 0x20, 0x11, 0x31, 0x42, 0x73, 0xb5, 0x28, 0xdd });
         const zero = AesBlock.fromBytes(&[_]u8{0} ** 16);
@@ -59,19 +60,49 @@ pub const Ponteil = struct {
         return self;
     }
 
+    pub fn init(k: ?[32]u8) Ponteil {
+        if (k) |k_| {
+            var st = Ponteil.init_(k_);
+            st.keyed = true;
+            return st;
+        }
+        const k_ = [_]u8{0} ** 32;
+        return Ponteil.init_(k_);
+    }
+
     fn absorb(self: *Ponteil, x: []const u8, up: u8) void {
         var i: usize = 0;
-        while (i + 32 <= x.len) : (i += 32) {
-            self.absorb_block(x[i..][0..32]);
-        }
-        if (x.len % 32 != 0) {
+
+        if (self.keyed) {
+            while (i + 32 <= x.len) : (i += 32) {
+                self.absorb_block(x[i..][0..32]);
+            }
+            if (x.len % 32 != 0) {
+                var pad = [_]u8{0} ** 32;
+                mem.copy(u8, pad[0 .. x.len % 32], x[i..]);
+                self.absorb_block(&pad);
+            }
+        } else {
             var pad = [_]u8{0} ** 32;
-            mem.copy(u8, pad[0 .. x.len % 32], x[i..]);
-            self.absorb_block(&pad);
+            while (i + 16 <= x.len) : (i += 16) {
+                @memcpy(pad[0..8], x[i..][0..8]);
+                @memcpy(pad[16..24], x[i + 8 ..][0..8]);
+                self.absorb_block(&pad);
+            }
+            const left = x.len % 16;
+            if (left != 0) {
+                const left1 = @min(8, left);
+                mem.copy(u8, pad[0..left1], x[i..][0..left1]);
+                if (left > 8) {
+                    const left2 = left - 8;
+                    mem.copy(u8, pad[16..][0..left2], x[i + 8 ..][0..left2]);
+                }
+                self.absorb_block(&pad);
+            }
         }
 
         var len = [_]u8{0x00} ** 32;
-        mem.writeIntLittle(u64, len[0..8], @intCast(u64, x.len) * 8);
+        mem.writeIntLittle(u64, len[0..8], @as(u64, @intCast(x.len)) * 8);
         len[31] ^= up;
         self.absorb_block(&len);
     }
@@ -88,8 +119,8 @@ pub const Ponteil = struct {
 
     pub fn finalize(self: *Ponteil, out: []u8) void {
         var b: [16]u8 = undefined;
-        mem.writeIntLittle(u64, b[0..8], @intCast(u64, self.ctx_segments) * 8);
-        mem.writeIntLittle(u64, b[8..16], @intCast(u64, self.m_segments) * 8);
+        mem.writeIntLittle(u64, b[0..8], @as(u64, @intCast(self.ctx_segments)) * 8);
+        mem.writeIntLittle(u64, b[8..16], @as(u64, @intCast(self.m_segments)) * 8);
         const t = self.s[2].xorBlocks(AesBlock.fromBytes(&b));
         var i: usize = 0;
         while (i < rounds - 1) : (i += 1) {
@@ -111,10 +142,19 @@ pub const Ponteil = struct {
         }
     }
 
-    // Only safe on *trusted* inputs, otherwise a key is absolutely necessary.
-    pub fn hash(ctx: ?[]const u8, m: []const u8) [32]u8 {
-        const k = [_]u8{0} ** 32;
+    pub fn mac(k: [32]u8, ctx: ?[]const u8, m: []const u8) [32]u8 {
         var ponteil = Ponteil.init(k);
+        if (ctx) |c| {
+            ponteil.push_context(c);
+        }
+        ponteil.push(m);
+        var out: [32]u8 = undefined;
+        ponteil.finalize(&out);
+        return out;
+    }
+
+    pub fn hash(ctx: ?[]const u8, m: []const u8) [32]u8 {
+        var ponteil = Ponteil.init(null);
         if (ctx) |c| {
             ponteil.push_context(c);
         }
@@ -129,13 +169,13 @@ const testing = std.testing;
 const fmt = std.fmt;
 
 test "hash" {
-    const len = 1_000_000 - 1;
+    const len = 100_000 - 1;
     const alloc = testing.allocator;
     var m = try alloc.alloc(u8, len);
     defer alloc.free(m);
-    mem.set(u8, m, 0);
+    @memset(m, 0);
     var h = Ponteil.hash(null, m);
     var expected_h: [32]u8 = undefined;
-    _ = try fmt.hexToBytes(&expected_h, "527ab52703ed16f67920bee03e36e3255869a9ade88b5af3f5b459d21f7e4cc3");
+    _ = try fmt.hexToBytes(&expected_h, "60ed63cf13fb49596a567a0b3538d16e6fa22a746531905fb93ed184783b5432");
     try testing.expectEqualSlices(u8, &h, &expected_h);
 }
