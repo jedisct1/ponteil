@@ -171,7 +171,7 @@ const fmt = std.fmt;
 test "hash" {
     const len = 100_000 - 1;
     const alloc = testing.allocator;
-    var m = try alloc.alloc(u8, len);
+    const m = try alloc.alloc(u8, len);
     defer alloc.free(m);
     @memset(m, 0);
     var h = Ponteil.hash(null, m);
